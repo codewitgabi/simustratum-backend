@@ -18,6 +18,13 @@ class ScenarioType(str, PyEnum):
     ENGLISH_PROFICIENCY = "english_proficiency"
 
 
+class SessionStatus(str, PyEnum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    ABANDONED = "abandoned"
+
+
 class Session(Base):
     __tablename__ = "sessions"
 
@@ -37,6 +44,12 @@ class Session(Base):
     clarity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
     structure: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[SessionStatus] = mapped_column(
+        Enum(SessionStatus), nullable=False, default=SessionStatus.PENDING
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    question_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

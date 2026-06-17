@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,7 +8,13 @@ from api.database import get_db
 from api.response import success_response
 from api.v1.dependencies.auth import get_current_user
 from api.v1.models.user import User
-from api.v1.schemas.session import CreateSessionRequest, SessionListItem, SessionResponse
+from api.v1.schemas.session import (
+    CreateSessionRequest,
+    SessionEndRequest,
+    SessionEndResponse,
+    SessionListItem,
+    SessionResponse,
+)
 from api.v1.services import session as session_service
 
 session_router = APIRouter(prefix="/sessions", tags=["Sessions"])
@@ -51,3 +59,30 @@ async def list_sessions(
             "meta": {"total": total, "page": page, "limit": limit},
         },
     )
+
+
+@session_router.post("/{session_id}/end", status_code=status.HTTP_200_OK)
+async def end_session(
+    session_id: uuid.UUID,
+    body: SessionEndRequest = SessionEndRequest(),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    session = await session_service.end_session(user.id, session_id, body.reason, db)
+
+    duration_seconds = None
+    if session.started_at is not None and session.ended_at is not None:
+        duration_seconds = int((session.ended_at - session.started_at).total_seconds())
+
+    response = SessionEndResponse(
+        id=session.id,
+        status=session.status,
+        clarity=session.clarity,
+        confidence=session.confidence,
+        structure=session.structure,
+        question_count=session.question_count,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        duration_seconds=duration_seconds,
+    )
+    return success_response(message="Session ended successfully", data=response.model_dump())

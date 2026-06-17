@@ -14,12 +14,15 @@ class Config(BaseSettings):
 
     ALLOWED_ORIGINS: Optional[str] = None
 
-    JWT_SECRET_KEY: str = "changeme"
+    JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 30
 
     GOOGLE_CLIENT_ID: Optional[str] = None
+
+    ANTHROPIC_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
 
     DOCS_AUTH_USERNAME: Optional[str] = None
     DOCS_AUTH_PASSWORD: Optional[str] = None

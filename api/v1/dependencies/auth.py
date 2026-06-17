@@ -17,12 +17,7 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def get_current_access_token(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
-    db: AsyncSession = Depends(get_db),
-) -> str:
-    token = credentials.credentials
-
+async def _validate_access_token(token: str, db: AsyncSession) -> dict:
     try:
         payload = decode_token(token)
     except Exception:
@@ -38,16 +33,19 @@ async def get_current_access_token(
     if result.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
 
+    return payload
+
+
+async def get_current_access_token(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer),
+    db: AsyncSession = Depends(get_db),
+) -> str:
+    token = credentials.credentials
+    await _validate_access_token(token, db)
     return token
 
 
-async def get_current_user(
-    access_token: str = Depends(get_current_access_token),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    payload = decode_token(access_token)
-    user_id = payload.get("sub")
-
+async def _load_user(user_id: str | None, db: AsyncSession) -> User:
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
@@ -55,3 +53,24 @@ async def get_current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     return user
+
+
+async def get_current_user(
+    access_token: str = Depends(get_current_access_token),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    payload = decode_token(access_token)
+    return await _load_user(payload.get("sub"), db)
+
+
+async def get_current_user_ws(token: str, db: AsyncSession) -> User | None:
+    """
+    WebSocket variant: no HTTPException machinery (there's no HTTP response to
+    attach it to). Returns None on any auth failure so the caller can close the
+    socket with a WS-appropriate code instead.
+    """
+    try:
+        payload = await _validate_access_token(token, db)
+        return await _load_user(payload.get("sub"), db)
+    except HTTPException:
+        return None
