@@ -19,6 +19,8 @@ class Config(BaseSettings):
     JWT_ACCESS_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_EXPIRE_DAYS: int = 30
 
+    GOOGLE_CLIENT_ID: Optional[str] = None
+
     DOCS_AUTH_USERNAME: Optional[str] = None
     DOCS_AUTH_PASSWORD: Optional[str] = None
 
