@@ -11,6 +11,13 @@ from api.v1.schemas.session import CreateSessionRequest
 from api.v1.services.session_orchestrator import get_orchestrator
 
 
+def compute_overall_score(session: Session) -> int:
+    components = [c for c in (session.clarity, session.confidence, session.structure) if c is not None]
+    if not components:
+        return 0
+    return round(sum(components) / len(components))
+
+
 def _build_panelist_dicts(body: CreateSessionRequest) -> list[dict]:
     panelists = []
     for p in body.panelists:

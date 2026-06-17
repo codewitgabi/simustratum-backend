@@ -78,6 +78,7 @@ class SessionListItem(BaseModel):
     id: uuid.UUID
     title: str
     scenario: ScenarioType
+    status: SessionStatus
     score: int
     created_at: datetime
 

@@ -47,7 +47,8 @@ async def list_sessions(
             id=s.id,
             title=s.topic,
             scenario=s.scenario,
-            score=0,
+            status=s.status,
+            score=session_service.compute_overall_score(s),
             created_at=s.created_at,
         ).model_dump()
         for s in sessions
