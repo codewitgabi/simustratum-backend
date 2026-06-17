@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.v1.models.token_blacklist import TokenBlacklist
+from api.v1.models.user import User
 from api.v1.utils.jwt_tokens import decode_token
 
 _bearer = HTTPBearer()
@@ -38,3 +39,19 @@ async def get_current_access_token(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
 
     return token
+
+
+async def get_current_user(
+    access_token: str = Depends(get_current_access_token),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    payload = decode_token(access_token)
+    user_id = payload.get("sub")
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    return user
