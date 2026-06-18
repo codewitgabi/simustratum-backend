@@ -24,6 +24,12 @@ class Config(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
 
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_COLLECTION: str = "session_documents"
+
+    CLOUDINARY_URL: Optional[str] = None
+
     DOCS_AUTH_USERNAME: Optional[str] = None
     DOCS_AUTH_PASSWORD: Optional[str] = None
 

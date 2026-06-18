@@ -1,6 +1,6 @@
-from anthropic import APIError as AnthropicAPIError
 from anthropic import AsyncAnthropic
 from google import genai
+from google.genai import errors as genai_errors
 from google.genai import types as genai_types
 from pydantic import BaseModel, Field
 
@@ -55,7 +55,12 @@ NEXT_QUESTION_TOOL = {
 }
 
 
-def build_system_prompt(persona: PanelistPersona, scenario: ScenarioType, topic: str) -> str:
+def build_system_prompt(
+    persona: PanelistPersona,
+    scenario: ScenarioType,
+    topic: str,
+    document_context: list[str] | None = None,
+) -> str:
     if persona.strictness > 65:
         tone = "demanding and skeptical — you push back on vague or unsupported claims"
     elif persona.strictness < 35:
@@ -77,10 +82,23 @@ def build_system_prompt(persona: PanelistPersona, scenario: ScenarioType, topic:
     scenario_label = scenario.value.replace("_", " ")
     role_label = persona.role or "the subject matter"
 
+    document_block = ""
+    if document_context:
+        excerpts = "\n\n".join(f"[Excerpt {i + 1}]\n{chunk}" for i, chunk in enumerate(document_context))
+        document_block = f"""
+
+The student has submitted the following document for this session (e.g. their paper,
+slides, or proposal). Base your questions primarily on its actual content — ask about
+specifics, claims, and details from these excerpts rather than relying on general
+knowledge of the topic. Only fall back to general knowledge if the excerpts genuinely
+don't cover something directly relevant to what you want to ask.
+
+{excerpts}"""
+
     return f"""You are {persona.name}, a panelist in a {scenario_label} session.
 Your area of expertise is {role_label}. Your questioning style is {tone}. {depth}
 
-The student's topic is: "{topic}"
+The student's topic is: "{topic}"{document_block}
 
 You will be shown the conversation so far, in order. Ask exactly ONE question, fully
 in character as {persona.name}. Build naturally on what has already been discussed —
@@ -119,11 +137,12 @@ async def _generate_with_anthropic(
     topic: str,
     messages: list[dict],
     client: AsyncAnthropic,
+    document_context: list[str] | None = None,
 ) -> NextQuestion:
     response = await client.messages.create(
         model=ANTHROPIC_MODEL,
         max_tokens=400,
-        system=build_system_prompt(persona, scenario, topic),
+        system=build_system_prompt(persona, scenario, topic, document_context),
         messages=messages,
         tools=[NEXT_QUESTION_TOOL],
         tool_choice={"type": "tool", "name": "ask_question"},
@@ -150,12 +169,13 @@ async def _generate_with_gemini(
     topic: str,
     messages: list[dict],
     client: genai.Client,
+    document_context: list[str] | None = None,
 ) -> NextQuestion:
     response = await client.aio.models.generate_content(
         model=GEMINI_MODEL,
         contents=_to_gemini_contents(messages),
         config=genai_types.GenerateContentConfig(
-            system_instruction=build_system_prompt(persona, scenario, topic),
+            system_instruction=build_system_prompt(persona, scenario, topic, document_context),
             response_mime_type="application/json",
             response_schema=NextQuestion,
         ),
@@ -169,29 +189,38 @@ async def generate_next_question(
     topic: str,
     transcript_history: list[TranscriptTurn],
     all_panelists: dict[str, PanelistPersona],
-    anthropic_client: AsyncAnthropic,
-    gemini_client: genai.Client | None = None,
+    gemini_client: genai.Client,
+    anthropic_client: AsyncAnthropic | None = None,
+    document_context: list[str] | None = None,
 ) -> NextQuestion:
     """
-    Primary provider is Anthropic. If the Anthropic call itself fails (rate limit,
-    out of credit, auth, connection, etc. — anything under anthropic.APIError),
-    transparently retry the same turn on Gemini instead of bubbling up to the
+    Primary provider is Gemini. If the Gemini call itself fails (rate limit, out of
+    quota, auth, connection, etc. — anything under google.genai.errors.APIError),
+    transparently retry the same turn on Anthropic instead of bubbling up to the
     caller's generic "Can you expand further on that point?" fallback. A malformed
     response that fails NextQuestion validation is NOT retried here — that's a bug,
     not a provider-availability problem, and should surface to the caller as-is.
+
+    document_context, when provided (i.e. the session has an attached, embedded
+    document), is a handful of the most relevant chunks for the current turn —
+    the panelist is instructed to ground its question in them over general knowledge.
     """
     messages = _build_message_history(transcript_history, persona.id, all_panelists)
     if not messages:
         messages = [{"role": "user", "content": "[Session begins. Ask your opening question.]"}]
 
     try:
-        return await _generate_with_anthropic(persona, scenario, topic, messages, anthropic_client)
-    except AnthropicAPIError as exc:
-        if gemini_client is None:
+        return await _generate_with_gemini(
+            persona, scenario, topic, messages, gemini_client, document_context
+        )
+    except genai_errors.APIError as exc:
+        if anthropic_client is None:
             raise
 
         logger.warning(
-            "Anthropic call failed, falling back to Gemini",
+            "Gemini call failed, falling back to Anthropic",
             extra={"panelist_id": persona.id, "error": str(exc)},
         )
-        return await _generate_with_gemini(persona, scenario, topic, messages, gemini_client)
+        return await _generate_with_anthropic(
+            persona, scenario, topic, messages, anthropic_client, document_context
+        )

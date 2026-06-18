@@ -6,8 +6,10 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.v1.models.document import DocumentStatus
 from api.v1.models.session import Session, SessionStatus
 from api.v1.schemas.session import CreateSessionRequest
+from api.v1.services.document_service import get_owned_document
 from api.v1.services.session_orchestrator import get_orchestrator
 
 
@@ -27,9 +29,28 @@ def _build_panelist_dicts(body: CreateSessionRequest) -> list[dict]:
     return panelists
 
 
+async def _validate_document(user_id: Any, document_id: str, db: AsyncSession) -> None:
+    try:
+        parsed_id = uuid.UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid document_id")
+
+    document = await get_owned_document(user_id, parsed_id, db)
+    if document is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if document.status != DocumentStatus.READY:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Document is not ready yet (status: {document.status.value})",
+        )
+
+
 async def create_session(
     user_id: Any, body: CreateSessionRequest, db: AsyncSession
 ) -> Session:
+    if body.document_id is not None:
+        await _validate_document(user_id, body.document_id, db)
+
     session = Session(
         user_id=user_id,
         scenario=body.scenario,

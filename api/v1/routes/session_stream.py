@@ -21,6 +21,7 @@ from api.v1.schemas.transcript_turn import (
     ws_envelope,
 )
 from api.v1.services.anthropic_client import get_anthropic_client
+from api.v1.services.document_service import retrieve_relevant_chunks
 from api.v1.services.gemini_client import get_gemini_client
 from api.v1.services.llm_service import PanelistPersona, generate_next_question
 from api.v1.services.panelist_selector import select_next_panelist
@@ -172,6 +173,12 @@ async def session_stream(
             turns = await _get_turns(db, session_id)
             next_panelist = select_next_panelist(panelists, turns)
 
+            document_context = None
+            if session.document_id:
+                document_context = await retrieve_relevant_chunks(
+                    uuid.UUID(session.document_id), message.text
+                )
+
             try:
                 score_delta, next_question = await asyncio.gather(
                     score_response(message.text, session.scenario, session.topic),
@@ -181,8 +188,9 @@ async def session_stream(
                         session.topic,
                         turns,
                         panelists_by_id,
-                        get_anthropic_client(),
                         get_gemini_client(),
+                        get_anthropic_client(),
+                        document_context,
                     ),
                 )
                 next_question_text = next_question.question_text

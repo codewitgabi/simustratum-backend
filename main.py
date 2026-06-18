@@ -32,6 +32,7 @@ from api.v1.middlewares.errors import (
 )
 from api.v1.middlewares.logging import LoggingMiddleware
 from api.v1.routes import v1_router
+from api.v1.services import qdrant_client
 from api.v1.utils.config import config
 from api.v1.utils.logger import setup_logger
 
@@ -41,7 +42,9 @@ setup_logger()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.connect()
+    await qdrant_client.connect()
     yield
+    await qdrant_client.disconnect()
     await database.disconnect()
 
 
