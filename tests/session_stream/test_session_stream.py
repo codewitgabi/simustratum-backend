@@ -34,17 +34,22 @@ def _register(client: TestClient) -> dict:
     return response.json()["data"]
 
 
-def _create_session(client: TestClient, access_token: str) -> dict:
+def _create_session(client: TestClient, access_token: str, **option_overrides: bool) -> dict:
+    body = {
+        "scenario": "project_defense",
+        "topic": "A study on distributed consensus",
+        "panelists": [
+            {"name": "Dr. Okafor", "role": "Methods", "strictness": 70, "inquisitiveness": 60},
+        ],
+        "real_time_feedback": True,
+        "answer_timer": True,
+        "save_transcript": True,
+    }
+    body.update(option_overrides)
     response = client.post(
         "/api/v1/sessions",
         headers={"Authorization": f"Bearer {access_token}"},
-        json={
-            "scenario": "project_defense",
-            "topic": "A study on distributed consensus",
-            "panelists": [
-                {"name": "Dr. Okafor", "role": "Methods", "strictness": 70, "inquisitiveness": 60},
-            ],
-        },
+        json=body,
     )
     assert response.status_code == 201
     return response.json()["data"]
@@ -194,6 +199,99 @@ def test_audio_storage_key_is_persisted_for_user_turn(ws_client, stub_external_s
     user_turn = next(t for t in replay.json()["data"]["turns"] if t["speaker_type"] == "user")
     assert user_turn["audio_url"] is not None
     assert storage_key in user_turn["audio_url"]
+
+
+def test_real_time_feedback_disabled_suppresses_score_update(ws_client, stub_external_services):
+    user = _register(ws_client)
+    token = user["tokens"]["access_token"]
+    session = _create_session(ws_client, token, real_time_feedback=False)
+
+    with ws_client.websocket_connect(_stream_url(session["id"], token)) as ws:
+        ws.receive_json()  # initial session_state
+
+        ws.send_json({"type": "user_response", "text": "An answer.", "duration_ms": 1000})
+
+        # With real_time_feedback off, the very next message is the question itself —
+        # no score_update is ever sent for this connection.
+        message = ws.receive_json()
+        assert message["type"] == "panelist_question"
+
+
+def test_real_time_feedback_enabled_sends_score_update(ws_client, stub_external_services):
+    user = _register(ws_client)
+    token = user["tokens"]["access_token"]
+    session = _create_session(ws_client, token, real_time_feedback=True)
+
+    with ws_client.websocket_connect(_stream_url(session["id"], token)) as ws:
+        ws.receive_json()  # initial session_state
+
+        ws.send_json({"type": "user_response", "text": "An answer.", "duration_ms": 1000})
+
+        message = ws.receive_json()
+        assert message["type"] == "score_update"
+
+
+def test_answer_timer_enabled_advertises_duration_on_connect_and_each_question(
+    ws_client, stub_external_services
+):
+    user = _register(ws_client)
+    token = user["tokens"]["access_token"]
+    session = _create_session(ws_client, token, answer_timer=True, real_time_feedback=False)
+
+    with ws_client.websocket_connect(_stream_url(session["id"], token)) as ws:
+        initial = ws.receive_json()
+        assert initial["payload"]["answer_timer_seconds"] is not None
+
+        ws.send_json({"type": "user_response", "text": "An answer.", "duration_ms": 1000})
+        question = ws.receive_json()
+        assert question["type"] == "panelist_question"
+        assert question["payload"]["answer_timer_seconds"] is not None
+
+
+def test_answer_timer_disabled_omits_duration(ws_client, stub_external_services):
+    user = _register(ws_client)
+    token = user["tokens"]["access_token"]
+    session = _create_session(ws_client, token, answer_timer=False, real_time_feedback=False)
+
+    with ws_client.websocket_connect(_stream_url(session["id"], token)) as ws:
+        initial = ws.receive_json()
+        assert initial["payload"]["answer_timer_seconds"] is None
+
+        ws.send_json({"type": "user_response", "text": "An answer.", "duration_ms": 1000})
+        question = ws.receive_json()
+        assert question["payload"]["answer_timer_seconds"] is None
+
+
+def test_save_transcript_disabled_persists_no_turns_but_session_still_progresses(
+    ws_client, stub_external_services
+):
+    user = _register(ws_client)
+    token = user["tokens"]["access_token"]
+    session = _create_session(ws_client, token, save_transcript=False, real_time_feedback=True)
+
+    with ws_client.websocket_connect(_stream_url(session["id"], token)) as ws:
+        ws.receive_json()  # initial session_state
+
+        for i in range(QUESTION_LIMIT):
+            ws.send_json({"type": "user_response", "text": f"Answer {i}", "duration_ms": 1000})
+            score_message = ws.receive_json()
+            assert score_message["type"] == "score_update"
+            assert score_message["payload"]["question_count"] == i + 1
+
+            question_message = ws.receive_json()
+            assert question_message["type"] == "panelist_question"
+
+            if i == QUESTION_LIMIT - 1:
+                complete_message = ws.receive_json()
+                assert complete_message["type"] == "session_complete"
+
+    # Scores still accumulate on the session row even though no transcript was kept.
+    replay = ws_client.get(
+        f"/api/v1/sessions/{session['id']}/replay", headers={"Authorization": f"Bearer {token}"}
+    )
+    body = replay.json()["data"]
+    assert body["status"] == "completed"
+    assert body["turns"] == []
 
 
 def test_connect_rejects_invalid_token(ws_client, stub_external_services):

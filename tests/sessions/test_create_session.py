@@ -25,6 +25,33 @@ async def test_create_session_succeeds_with_minimal_body(client):
     assert len(body["panelists"]) == 2
     assert all("id" in p for p in body["panelists"])
     assert body["document_id"] is None
+    assert body["real_time_feedback"] is False
+    assert body["answer_timer"] is False
+    assert body["save_transcript"] is False
+
+
+@pytest.mark.asyncio
+async def test_create_session_honors_explicit_session_options(client):
+    headers = await registered_user_headers(client)
+
+    response = await client.post(
+        "/api/v1/sessions",
+        headers=headers,
+        json={
+            "scenario": "project_defense",
+            "topic": "A study on distributed consensus",
+            "panelists": sample_panelists(),
+            "real_time_feedback": True,
+            "answer_timer": True,
+            "save_transcript": True,
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()["data"]
+    assert body["real_time_feedback"] is True
+    assert body["answer_timer"] is True
+    assert body["save_transcript"] is True
 
 
 @pytest.mark.asyncio

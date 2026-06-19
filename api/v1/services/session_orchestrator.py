@@ -3,10 +3,12 @@ from enum import Enum as PyEnum
 
 from fastapi import WebSocket
 
+from api.v1.models.transcript_turn import TranscriptTurn
 from api.v1.services.llm_service import PanelistPersona
 
 QUESTION_LIMIT = 6
 DEFAULT_SCORE_BASELINE = 50
+ANSWER_TIMER_SECONDS = 90
 
 
 class TurnState(str, PyEnum):
@@ -33,6 +35,9 @@ class SessionOrchestrator:
         confidence: int | None,
         structure: int | None,
         question_count: int,
+        real_time_feedback: bool = False,
+        answer_timer: bool = False,
+        save_transcript: bool = False,
     ) -> None:
         self.session_id = session_id
         self.websocket = websocket
@@ -43,6 +48,13 @@ class SessionOrchestrator:
         self.confidence = confidence if confidence is not None else DEFAULT_SCORE_BASELINE
         self.structure = structure if structure is not None else DEFAULT_SCORE_BASELINE
         self.question_count = question_count
+        self.real_time_feedback = real_time_feedback
+        self.answer_timer = answer_timer
+        self.save_transcript = save_transcript
+        # In-memory turn history used as conversation context when save_transcript
+        # is off — nothing is persisted to the DB in that mode, so this is the only
+        # record of the conversation for the lifetime of the connection.
+        self.transcript_turns: list[TranscriptTurn] = []
 
     @property
     def awaiting_user_response(self) -> bool:

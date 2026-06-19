@@ -27,6 +27,7 @@ from api.v1.services.llm_service import PanelistPersona, generate_next_question
 from api.v1.services.panelist_selector import select_next_panelist
 from api.v1.services.scoring_service import score_response
 from api.v1.services.session_orchestrator import (
+    ANSWER_TIMER_SECONDS,
     QUESTION_LIMIT,
     SessionOrchestrator,
     TurnState,
@@ -58,6 +59,27 @@ async def _get_turns(db: AsyncSession, session_id: uuid.UUID) -> list[Transcript
     return list(result.scalars().all())
 
 
+async def _load_turns(
+    db: AsyncSession, session_id: uuid.UUID, orchestrator: SessionOrchestrator
+) -> list[TranscriptTurn]:
+    """save_transcript=False means nothing is ever written to transcript_turns, so the
+    only history available is the in-memory list kept on the orchestrator for the
+    lifetime of this connection."""
+    if orchestrator.save_transcript:
+        return await _get_turns(db, session_id)
+    return orchestrator.transcript_turns
+
+
+async def _add_turn(
+    db: AsyncSession, orchestrator: SessionOrchestrator, turn: TranscriptTurn
+) -> None:
+    if orchestrator.save_transcript:
+        db.add(turn)
+        await db.commit()
+    else:
+        orchestrator.transcript_turns.append(turn)
+
+
 def _session_state_payload(
     session: Session, orchestrator: SessionOrchestrator, current_panelist_id: str | None
 ) -> SessionStatePayload:
@@ -69,6 +91,7 @@ def _session_state_payload(
         structure=orchestrator.structure,
         current_panelist_id=current_panelist_id,
         awaiting_user_response=orchestrator.awaiting_user_response,
+        answer_timer_seconds=ANSWER_TIMER_SECONDS if orchestrator.answer_timer else None,
     )
 
 
@@ -110,6 +133,9 @@ async def session_stream(
         confidence=session.confidence,
         structure=session.structure,
         question_count=session.question_count,
+        real_time_feedback=session.real_time_feedback,
+        answer_timer=session.answer_timer,
+        save_transcript=session.save_transcript,
     )
     register_orchestrator(orchestrator)
 
@@ -128,7 +154,10 @@ async def session_stream(
             )
         else:
             # Reconnect resync: rebuild visual state from the last persisted turn.
-            turns = await _get_turns(db, session_id)
+            # (When save_transcript is off, the in-memory history doesn't survive a
+            # reconnect — a new orchestrator is created per connection — so this can
+            # only resync to "awaiting a response".)
+            turns = await _load_turns(db, session_id, orchestrator)
             last_turn = turns[-1] if turns else None
             current_panelist_id: str | None = None
 
@@ -154,7 +183,7 @@ async def session_stream(
             message = UserResponseMessage.model_validate(raw)
             orchestrator.turn_state = TurnState.PROCESSING_RESPONSE
 
-            turns = await _get_turns(db, session_id)
+            turns = await _load_turns(db, session_id, orchestrator)
             next_sequence = len(turns)
 
             # Patch the gesture timeline onto the panelist turn the user just
@@ -175,10 +204,9 @@ async def session_stream(
                 started_at_ms=0,
                 ended_at_ms=message.duration_ms,
             )
-            db.add(user_turn)
-            await db.commit()
+            await _add_turn(db, orchestrator, user_turn)
 
-            turns = await _get_turns(db, session_id)
+            turns = await _load_turns(db, session_id, orchestrator)
             next_panelist = select_next_panelist(panelists, turns)
 
             document_context = None
@@ -231,17 +259,18 @@ async def session_stream(
             session.question_count = orchestrator.question_count
             await db.commit()
 
-            await websocket.send_json(
-                ws_envelope(
-                    WSMessageType.SCORE_UPDATE,
-                    ScoreUpdatePayload(
-                        clarity=orchestrator.clarity,
-                        confidence=orchestrator.confidence,
-                        structure=orchestrator.structure,
-                        question_count=orchestrator.question_count,
-                    ),
+            if orchestrator.real_time_feedback:
+                await websocket.send_json(
+                    ws_envelope(
+                        WSMessageType.SCORE_UPDATE,
+                        ScoreUpdatePayload(
+                            clarity=orchestrator.clarity,
+                            confidence=orchestrator.confidence,
+                            structure=orchestrator.structure,
+                            question_count=orchestrator.question_count,
+                        ),
+                    )
                 )
-            )
 
             panelist_turn = TranscriptTurn(
                 session_id=session_id,
@@ -260,8 +289,7 @@ async def session_stream(
                     "structure": orchestrator.structure,
                 },
             )
-            db.add(panelist_turn)
-            await db.commit()
+            await _add_turn(db, orchestrator, panelist_turn)
 
             orchestrator.current_panelist_id = next_panelist.id
 
@@ -273,6 +301,7 @@ async def session_stream(
                         question_text=next_question_text,
                         is_followup=is_followup,
                         audio_url=None,
+                        answer_timer_seconds=ANSWER_TIMER_SECONDS if orchestrator.answer_timer else None,
                     ),
                 )
             )

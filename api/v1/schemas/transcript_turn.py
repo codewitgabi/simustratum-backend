@@ -29,6 +29,7 @@ class PanelistQuestionPayload(BaseModel):
     question_text: str
     is_followup: bool
     audio_url: str | None = None
+    answer_timer_seconds: int | None = None
 
 
 class SessionStatePayload(BaseModel):
@@ -41,6 +42,7 @@ class SessionStatePayload(BaseModel):
     structure: int | None
     current_panelist_id: str | None
     awaiting_user_response: bool
+    answer_timer_seconds: int | None = None
 
 
 class ErrorPayload(BaseModel):
