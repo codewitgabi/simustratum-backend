@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from api.v1.models.session import ScenarioType, SessionStatus
+from api.v1.models.transcript_turn import SpeakerType
 
 
 class PanelistRequest(BaseModel):
@@ -83,3 +84,33 @@ class SessionListItem(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class ReplayTurn(BaseModel):
+    sequence: int
+    speaker_type: SpeakerType
+    panelist_id: str | None
+    text: str
+    audio_url: str | None  # populated (freshly signed) for USER turns; always null for PANELIST turns
+    started_at_ms: int
+    ended_at_ms: int
+    gesture_sequence: list[dict] | None
+    score_snapshot: dict | None
+    is_followup: bool
+    targets_weakness: str | None
+
+    model_config = {"from_attributes": True}
+
+
+class ReplaySessionResponse(BaseModel):
+    session_id: uuid.UUID
+    scenario: ScenarioType
+    topic: str
+    panelists: list[dict]
+    status: SessionStatus
+    started_at: datetime | None
+    ended_at: datetime | None
+    final_clarity: int | None
+    final_confidence: int | None
+    final_structure: int | None
+    turns: list[ReplayTurn]

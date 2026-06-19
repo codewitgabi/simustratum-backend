@@ -10,11 +10,13 @@ from api.v1.dependencies.auth import get_current_user
 from api.v1.models.user import User
 from api.v1.schemas.session import (
     CreateSessionRequest,
+    ReplaySessionResponse,
     SessionEndRequest,
     SessionEndResponse,
     SessionListItem,
     SessionResponse,
 )
+from api.v1.schemas.transcript_turn import AudioUploadRequest, AudioUploadResponse
 from api.v1.services import session as session_service
 
 session_router = APIRouter(prefix="/sessions", tags=["Sessions"])
@@ -87,3 +89,24 @@ async def end_session(
         duration_seconds=duration_seconds,
     )
     return success_response(message="Session ended successfully", data=response.model_dump())
+
+
+@session_router.post("/{session_id}/turns/audio-upload-url", status_code=status.HTTP_200_OK)
+async def request_audio_upload_url(
+    session_id: uuid.UUID,
+    body: AudioUploadRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    response = await session_service.create_audio_upload_url(user.id, session_id, body, db)
+    return success_response(message="Upload URL generated successfully", data=response.model_dump())
+
+
+@session_router.get("/{session_id}/replay", status_code=status.HTTP_200_OK)
+async def get_session_replay(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    response: ReplaySessionResponse = await session_service.get_session_replay(user.id, session_id, db)
+    return success_response(message="Session replay retrieved successfully", data=response.model_dump())

@@ -31,6 +31,7 @@ class TranscriptTurn(Base):
     panelist_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     text: Mapped[str] = mapped_column(String, nullable=False)
     audio_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    audio_storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     started_at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     ended_at_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     gesture_sequence: Mapped[list[dict] | None] = mapped_column(JSONB, nullable=True)

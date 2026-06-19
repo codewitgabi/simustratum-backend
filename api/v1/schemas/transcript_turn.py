@@ -59,8 +59,23 @@ class UserResponseMessage(BaseModel):
 
     type: str = "user_response"
     text: str
-    audio_url: str | None = None
+    audio_storage_key: str | None = None
     duration_ms: int
+    # Gesture timeline the client just finished animating for the panelist
+    # turn it watched before answering — bundled here rather than sent as a
+    # separate message, see Part 5 of the audio-replay handout.
+    previous_turn_gestures: list[dict] | None = None
+
+
+class AudioUploadRequest(BaseModel):
+    turn_sequence: int
+    content_type: str
+
+
+class AudioUploadResponse(BaseModel):
+    upload_url: str
+    storage_key: str
+    upload_params: dict[str, str]
 
 
 def ws_envelope(message_type: WSMessageType, payload: BaseModel) -> dict:

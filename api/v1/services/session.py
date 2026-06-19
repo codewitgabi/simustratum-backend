@@ -8,7 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.v1.models.document import DocumentStatus
 from api.v1.models.session import Session, SessionStatus
-from api.v1.schemas.session import CreateSessionRequest
+from api.v1.models.transcript_turn import SpeakerType, TranscriptTurn
+from api.v1.schemas.session import CreateSessionRequest, ReplaySessionResponse, ReplayTurn
+from api.v1.schemas.transcript_turn import AudioUploadRequest, AudioUploadResponse
+from api.v1.services.cloudinary_client import (
+    build_audio_storage_key,
+    generate_audio_upload_params,
+    get_audio_upload_url,
+    get_playable_audio_url,
+    is_allowed_audio_content_type,
+)
 from api.v1.services.document_service import get_owned_document
 from api.v1.services.session_orchestrator import get_orchestrator
 
@@ -112,3 +121,93 @@ async def end_session(
         await orchestrator.request_close(reason="Session ended via REST endpoint")
 
     return session
+
+
+async def create_audio_upload_url(
+    user_id: Any, session_id: uuid.UUID, body: AudioUploadRequest, db: AsyncSession
+) -> AudioUploadResponse:
+    if not is_allowed_audio_content_type(body.content_type):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported audio content type: {body.content_type}",
+        )
+
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if session.status != SessionStatus.IN_PROGRESS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Session is not in progress (status: {session.status.value})",
+        )
+
+    storage_key = build_audio_storage_key(session_id, body.turn_sequence)
+    return AudioUploadResponse(
+        upload_url=get_audio_upload_url(),
+        storage_key=storage_key,
+        upload_params=generate_audio_upload_params(storage_key),
+    )
+
+
+async def get_session_replay(
+    user_id: Any, session_id: uuid.UUID, db: AsyncSession
+) -> ReplaySessionResponse:
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if session.status in (SessionStatus.PENDING, SessionStatus.IN_PROGRESS):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Session is not finished — use the live WebSocket for an ongoing session",
+        )
+
+    turns_result = await db.execute(
+        select(TranscriptTurn)
+        .where(TranscriptTurn.session_id == session_id)
+        .order_by(TranscriptTurn.sequence)
+    )
+    turns = list(turns_result.scalars().all())
+
+    replay_turns = []
+    for turn in turns:
+        audio_url = None
+        if turn.speaker_type == SpeakerType.USER and turn.audio_storage_key:
+            audio_url = get_playable_audio_url(turn.audio_storage_key)
+
+        replay_turns.append(
+            ReplayTurn(
+                sequence=turn.sequence,
+                speaker_type=turn.speaker_type,
+                panelist_id=turn.panelist_id,
+                text=turn.text,
+                audio_url=audio_url,
+                started_at_ms=turn.started_at_ms,
+                ended_at_ms=turn.ended_at_ms,
+                gesture_sequence=turn.gesture_sequence,
+                score_snapshot=turn.score_snapshot,
+                is_followup=turn.is_followup,
+                targets_weakness=turn.targets_weakness,
+            )
+        )
+
+    return ReplaySessionResponse(
+        session_id=session.id,
+        scenario=session.scenario,
+        topic=session.topic,
+        panelists=session.panelists,
+        status=session.status,
+        started_at=session.started_at,
+        ended_at=session.ended_at,
+        final_clarity=session.clarity,
+        final_confidence=session.confidence,
+        final_structure=session.structure,
+        turns=replay_turns,
+    )

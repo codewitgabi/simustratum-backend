@@ -157,13 +157,21 @@ async def session_stream(
             turns = await _get_turns(db, session_id)
             next_sequence = len(turns)
 
+            # Patch the gesture timeline onto the panelist turn the user just
+            # watched, bundled into this message rather than sent separately
+            # — see Part 5 of the audio-replay handout for why.
+            if message.previous_turn_gestures is not None and turns:
+                last_turn = turns[-1]
+                if last_turn.speaker_type == SpeakerType.PANELIST:
+                    last_turn.gesture_sequence = message.previous_turn_gestures
+
             user_turn = TranscriptTurn(
                 session_id=session_id,
                 sequence=next_sequence,
                 speaker_type=SpeakerType.USER,
                 panelist_id=None,
                 text=message.text,
-                audio_url=message.audio_url,
+                audio_storage_key=message.audio_storage_key,
                 started_at_ms=0,
                 ended_at_ms=message.duration_ms,
             )
