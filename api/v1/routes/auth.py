@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,13 +8,17 @@ from api.v1.dependencies.auth import get_current_access_token, get_current_user
 from api.v1.models.user import User
 from api.v1.schemas.auth import (
     ChangePasswordRequest,
+    ForgotPasswordRequest,
     GoogleAuthRequest,
     LoginRequest,
     RefreshTokenRequest,
     RegisterRequest,
+    ResetPasswordRequest,
     UpdateUserDetailRequest,
 )
 from api.v1.services import auth as auth_service
+from api.v1.services.email_service import send_password_reset_email
+from api.v1.utils.request_context import get_client_origin
 
 auth_router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -78,3 +82,28 @@ async def change_password(
 ) -> JSONResponse:
     await auth_service.change_password(user, body.current_password, body.new_password, db)
     return success_response(message="Password changed successfully")
+
+
+@auth_router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(
+    body: ForgotPasswordRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    client_origin = get_client_origin(request)
+    result = await auth_service.request_password_reset(body.email, client_origin, db)
+    if result is not None:
+        to_email, reset_link = result
+        background_tasks.add_task(send_password_reset_email, to_email, reset_link)
+    return success_response(
+        message="If an account exists for that email, a password reset link has been sent."
+    )
+
+
+@auth_router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(
+    body: ResetPasswordRequest, db: AsyncSession = Depends(get_db)
+) -> JSONResponse:
+    await auth_service.reset_password(body.token, body.new_password, db)
+    return success_response(message="Password has been reset successfully")

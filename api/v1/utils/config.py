@@ -33,6 +33,24 @@ class Config(BaseSettings):
     DOCS_AUTH_USERNAME: Optional[str] = None
     DOCS_AUTH_PASSWORD: Optional[str] = None
 
+    # Password reset
+    PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
+    # Fallback base URL for the reset link, only used when a request carries
+    # neither an Origin nor a Referer header (e.g. a non-browser client).
+    FRONTEND_URL: Optional[str] = None
+
+    # Outbound email (fastapi-mail / SMTP)
+    MAIL_USERNAME: Optional[str] = None
+    MAIL_PASSWORD: Optional[str] = None
+    MAIL_FROM: str = "no-reply@simustratum.app"
+    MAIL_FROM_NAME: str = "Simustratum"
+    MAIL_PORT: int = 587
+    MAIL_SERVER: Optional[str] = None
+    MAIL_STARTTLS: bool = True
+    MAIL_SSL_TLS: bool = False
+    MAIL_USE_CREDENTIALS: bool = True
+    MAIL_VALIDATE_CERTS: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env", case_sensitive=True, env_file_encoding="utf-8"
     )

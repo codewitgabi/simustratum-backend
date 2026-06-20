@@ -216,3 +216,22 @@ def stub_external_services(monkeypatch) -> None:
     monkeypatch.setattr("api.v1.services.document_service.embed_query", _fake_embed_query)
     monkeypatch.setattr("api.v1.services.document_service.upload_to_cloudinary", _fake_upload_to_cloudinary)
     monkeypatch.setattr("api.v1.services.llm_service._generate_with_gemini", _fake_generate_with_gemini)
+
+
+@pytest.fixture
+def captured_emails(monkeypatch) -> list[dict]:
+    """Stand-in for send_password_reset_email — MAIL_SERVER is unset in the test
+    env, so the real function already no-ops without this, but tests that need to
+    pull the reset token out of the generated link use this to capture it.
+
+    send_password_reset_email is dispatched via BackgroundTasks from the route
+    module (api.v1.routes.auth), which holds its own imported reference to it —
+    that's the namespace that must be patched, not api.v1.services.email_service
+    where it's defined."""
+    sent: list[dict] = []
+
+    async def _fake_send(to_email: str, reset_link: str) -> None:
+        sent.append({"to_email": to_email, "reset_link": reset_link})
+
+    monkeypatch.setattr("api.v1.routes.auth.send_password_reset_email", _fake_send)
+    return sent

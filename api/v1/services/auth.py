@@ -1,5 +1,6 @@
 import hashlib
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -7,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.v1.models.password_reset_token import PasswordResetToken
 from api.v1.models.token_blacklist import TokenBlacklist
 from api.v1.models.user import AuthProvider, User
 from api.v1.schemas.auth import TokenResponse, UserResponse
@@ -15,6 +17,10 @@ from api.v1.utils.jwt_tokens import create_access_token, create_refresh_token, d
 from api.v1.utils.password_hash import hash_password, verify_password
 
 _GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
+
+
+def _hash_reset_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _build_tokens(user: User) -> dict[str, Any]:
@@ -155,6 +161,61 @@ async def change_password(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
 
     user.password_hash = hash_password(new_password)
+    await db.commit()
+
+
+async def request_password_reset(
+    email: str, client_origin: str, db: AsyncSession
+) -> tuple[str, str] | None:
+    """
+    Returns (recipient_email, reset_link) if a reset email should be sent, or
+    None otherwise — caller is responsible for actually sending it (as a
+    background task, so this endpoint's response doesn't wait on mail server
+    latency). Always returns silently (None) for an unknown email or a
+    Google-only account, rather than raising, so this endpoint can't be used to
+    enumerate registered emails.
+    """
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if user is None or user.auth_provider != AuthProvider.EMAIL:
+        return None
+
+    raw_token = secrets.token_urlsafe(32)
+    db.add(
+        PasswordResetToken(
+            user_id=user.id,
+            token_hash=_hash_reset_token(raw_token),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(minutes=config.PASSWORD_RESET_TOKEN_EXPIRE_MINUTES),
+        )
+    )
+    await db.commit()
+
+    reset_link = f"{client_origin}/reset-password?token={raw_token}"
+    return user.email, reset_link
+
+
+async def reset_password(token: str, new_password: str, db: AsyncSession) -> None:
+    result = await db.execute(
+        select(PasswordResetToken).where(PasswordResetToken.token_hash == _hash_reset_token(token))
+    )
+    record = result.scalar_one_or_none()
+
+    if (
+        record is None
+        or record.used_at is not None
+        or record.expires_at < datetime.now(timezone.utc)
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
+
+    user_result = await db.execute(select(User).where(User.id == record.user_id))
+    user = user_result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset link")
+
+    user.password_hash = hash_password(new_password)
+    record.used_at = datetime.now(timezone.utc)
     await db.commit()
 
 
