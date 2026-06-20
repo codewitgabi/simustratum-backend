@@ -123,6 +123,24 @@ async def end_session(
     return session
 
 
+async def delete_session(user_id: Any, session_id: uuid.UUID, db: AsyncSession) -> None:
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if session.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    if session.status == SessionStatus.IN_PROGRESS:
+        orchestrator = get_orchestrator(session_id)
+        if orchestrator is not None:
+            await orchestrator.request_close(reason="Session deleted via REST endpoint")
+
+    await db.delete(session)
+    await db.commit()
+
+
 async def create_audio_upload_url(
     user_id: Any, session_id: uuid.UUID, body: AudioUploadRequest, db: AsyncSession
 ) -> AudioUploadResponse:

@@ -91,6 +91,16 @@ async def end_session(
     return success_response(message="Session ended successfully", data=response.model_dump())
 
 
+@session_router.delete("/{session_id}", status_code=status.HTTP_200_OK)
+async def delete_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    await session_service.delete_session(user.id, session_id, db)
+    return success_response(message="Session deleted successfully", data=None)
+
+
 @session_router.post("/{session_id}/turns/audio-upload-url", status_code=status.HTTP_200_OK)
 async def request_audio_upload_url(
     session_id: uuid.UUID,
