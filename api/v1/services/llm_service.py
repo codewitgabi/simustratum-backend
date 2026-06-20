@@ -1,3 +1,6 @@
+from pathlib import Path
+from string import Template
+
 from anthropic import AsyncAnthropic
 from google import genai
 from google.genai import errors as genai_errors
@@ -12,6 +15,22 @@ logger = get_logger("llm_service")
 
 ANTHROPIC_MODEL = "claude-sonnet-4-6"
 GEMINI_MODEL = "gemini-2.5-flash"
+
+PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
+_PROMPT_TEMPLATE_CACHE: dict[ScenarioType, Template] = {}
+
+
+def _load_prompt_template(scenario: ScenarioType) -> Template:
+    """Each scenario has its own system-prompt template under /prompts, named after
+    the scenario's enum value, so the panelist's behavior (what it asks, and why)
+    is genuinely different per scenario rather than one generic template with a
+    scenario name substituted in."""
+    template = _PROMPT_TEMPLATE_CACHE.get(scenario)
+    if template is None:
+        path = PROMPTS_DIR / f"{scenario.value}.md"
+        template = Template(path.read_text(encoding="utf-8"))
+        _PROMPT_TEMPLATE_CACHE[scenario] = template
+    return template
 
 
 class PanelistPersona(BaseModel):
@@ -46,13 +65,34 @@ NEXT_QUESTION_TOOL = {
     "input_schema": {
         "type": "object",
         "properties": {
-            "question_text": {"type": "string"},
+            "question_text": {
+                "type": "string",
+                "description": "One short sentence, ideally under 25 words. No preamble.",
+            },
             "is_followup": {"type": "boolean"},
             "targets_weakness": {"type": ["string", "null"]},
         },
         "required": ["question_text", "is_followup"],
     },
 }
+
+# Appended to every scenario template so the "ask one short, forward-moving question"
+# rule lives in one place rather than being copy-pasted (and drifting) across the
+# per-scenario files. English proficiency gets its own variant since it isn't asking
+# a "question" at all, but a pronunciation instruction.
+_QUESTION_EPILOGUE = """
+You will be shown the conversation so far, in order. Ask exactly ONE question, and keep
+it short — one short sentence, no preamble or restating what's already been said.
+Always move the conversation forward: build on the answer just given, but do not
+revisit, rephrase, or circle back to ground already covered earlier in this session.
+Do not repeat a question that has already been asked, and do not break character or
+refer to yourself as an AI."""
+
+_PRONUNCIATION_EPILOGUE = """
+You will be shown the conversation so far, in order. Give exactly ONE short pronunciation
+instruction, one sentence, naming a single new word or phrase. Always move forward to a
+new word — never repeat or circle back to a word or phrase already given earlier in this
+session. Do not break character or refer to yourself as an AI."""
 
 
 def build_system_prompt(
@@ -79,7 +119,6 @@ def build_system_prompt(
     else:
         depth = "You ask clearly-scoped, mostly independent questions rather than deep follow-up chains."
 
-    scenario_label = scenario.value.replace("_", " ")
     role_label = persona.role or "the subject matter"
 
     document_block = ""
@@ -95,15 +134,18 @@ don't cover something directly relevant to what you want to ask.
 
 {excerpts}"""
 
-    return f"""You are {persona.name}, a panelist in a {scenario_label} session.
-Your area of expertise is {role_label}. Your questioning style is {tone}. {depth}
-
-The student's topic is: "{topic}"{document_block}
-
-You will be shown the conversation so far, in order. Ask exactly ONE question, fully
-in character as {persona.name}. Build naturally on what has already been discussed —
-do not repeat a question that has already been asked, and do not break character or
-refer to yourself as an AI."""
+    body = _load_prompt_template(scenario).substitute(
+        persona_name=persona.name,
+        role_label=role_label,
+        tone=tone,
+        depth=depth,
+        topic=topic,
+        document_block=document_block,
+    )
+    epilogue = (
+        _PRONUNCIATION_EPILOGUE if scenario == ScenarioType.ENGLISH_PROFICIENCY else _QUESTION_EPILOGUE
+    )
+    return f"{body}\n{epilogue}"
 
 
 def _build_message_history(
