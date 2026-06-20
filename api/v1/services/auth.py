@@ -135,6 +135,29 @@ async def google_auth(id_token: str, db: AsyncSession) -> dict[str, Any]:
     return _build_response(user)
 
 
+async def update_user_detail(user: User, full_name: str, db: AsyncSession) -> dict[str, Any]:
+    user.full_name = full_name
+    await db.commit()
+    await db.refresh(user)
+    return UserResponse.model_validate(user).model_dump()
+
+
+async def change_password(
+    user: User, current_password: str, new_password: str, db: AsyncSession
+) -> None:
+    if user.auth_provider != AuthProvider.EMAIL or user.password_hash is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This account has no password to change (signed in via Google)",
+        )
+
+    if not verify_password(current_password, user.password_hash):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
+
+    user.password_hash = hash_password(new_password)
+    await db.commit()
+
+
 def _blacklist_token(token: str, db_session: AsyncSession) -> None:
     payload = decode_token(token)
     expires_at = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)

@@ -36,6 +36,30 @@ class TokenResponse(BaseModel):
     token_type: str = "Bearer"
 
 
+class UpdateUserDetailRequest(BaseModel):
+    full_name: str
+
+    @field_validator("full_name")
+    @classmethod
+    def full_name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("full_name must not be blank")
+        return v
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def new_password_min_length(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        return v
+
+
 class UserResponse(BaseModel):
     id: uuid.UUID
     full_name: str
