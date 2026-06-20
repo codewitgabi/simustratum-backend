@@ -3,19 +3,17 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.v1.dependencies.auth import get_current_user_ws
-from api.v1.models.session import Session, SessionStatus
+from api.v1.models.session import SessionStatus
 from api.v1.models.transcript_turn import SpeakerType, TranscriptTurn
 from api.v1.schemas.transcript_turn import (
     ErrorPayload,
     PanelistQuestionPayload,
     ScoreUpdatePayload,
     SessionCompletePayload,
-    SessionStatePayload,
     UserResponseMessage,
     WSMessageType,
     ws_envelope,
@@ -23,7 +21,7 @@ from api.v1.schemas.transcript_turn import (
 from api.v1.services.anthropic_client import get_anthropic_client
 from api.v1.services.document_service import retrieve_relevant_chunks
 from api.v1.services.gemini_client import get_gemini_client
-from api.v1.services.llm_service import PanelistPersona, generate_next_question
+from api.v1.services.llm_service import generate_next_question
 from api.v1.services.panelist_selector import select_next_panelist
 from api.v1.services.scoring_service import score_response
 from api.v1.services.session_orchestrator import (
@@ -34,65 +32,18 @@ from api.v1.services.session_orchestrator import (
     register_orchestrator,
     unregister_orchestrator,
 )
+from api.v1.services.session_stream_service import (
+    add_turn,
+    build_personas,
+    build_session_state_payload,
+    get_session,
+    load_turns,
+)
 from api.v1.utils.logger import get_logger
 
 logger = get_logger("session_stream")
 
 stream_router = APIRouter(tags=["Sessions"])
-
-
-def _build_personas(panelists_data: list[dict]) -> list[PanelistPersona]:
-    return [PanelistPersona(**p) for p in panelists_data]
-
-
-async def _get_session(db: AsyncSession, session_id: uuid.UUID) -> Session | None:
-    result = await db.execute(select(Session).where(Session.id == session_id))
-    return result.scalar_one_or_none()
-
-
-async def _get_turns(db: AsyncSession, session_id: uuid.UUID) -> list[TranscriptTurn]:
-    result = await db.execute(
-        select(TranscriptTurn)
-        .where(TranscriptTurn.session_id == session_id)
-        .order_by(TranscriptTurn.sequence)
-    )
-    return list(result.scalars().all())
-
-
-async def _load_turns(
-    db: AsyncSession, session_id: uuid.UUID, orchestrator: SessionOrchestrator
-) -> list[TranscriptTurn]:
-    """save_transcript=False means nothing is ever written to transcript_turns, so the
-    only history available is the in-memory list kept on the orchestrator for the
-    lifetime of this connection."""
-    if orchestrator.save_transcript:
-        return await _get_turns(db, session_id)
-    return orchestrator.transcript_turns
-
-
-async def _add_turn(
-    db: AsyncSession, orchestrator: SessionOrchestrator, turn: TranscriptTurn
-) -> None:
-    if orchestrator.save_transcript:
-        db.add(turn)
-        await db.commit()
-    else:
-        orchestrator.transcript_turns.append(turn)
-
-
-def _session_state_payload(
-    session: Session, orchestrator: SessionOrchestrator, current_panelist_id: str | None
-) -> SessionStatePayload:
-    return SessionStatePayload(
-        status=session.status,
-        question_count=orchestrator.question_count,
-        clarity=orchestrator.clarity,
-        confidence=orchestrator.confidence,
-        structure=orchestrator.structure,
-        current_panelist_id=current_panelist_id,
-        awaiting_user_response=orchestrator.awaiting_user_response,
-        answer_timer_seconds=ANSWER_TIMER_SECONDS if orchestrator.answer_timer else None,
-    )
 
 
 @stream_router.websocket("/sessions/{session_id}/stream")
@@ -107,7 +58,7 @@ async def session_stream(
         await websocket.close(code=4401, reason="Invalid or expired token")
         return
 
-    session = await _get_session(db, session_id)
+    session = await get_session(db, session_id)
     if session is None:
         await websocket.close(code=4404, reason="Session not found")
         return
@@ -122,7 +73,7 @@ async def session_stream(
 
     await websocket.accept()
 
-    panelists = _build_personas(session.panelists)
+    panelists = build_personas(session.panelists)
     panelists_by_id = {p.id: p for p in panelists}
 
     orchestrator = SessionOrchestrator(
@@ -149,7 +100,7 @@ async def session_stream(
             await websocket.send_json(
                 ws_envelope(
                     WSMessageType.SESSION_STATE,
-                    _session_state_payload(session, orchestrator, current_panelist_id=None),
+                    build_session_state_payload(session, orchestrator, current_panelist_id=None),
                 )
             )
         else:
@@ -157,7 +108,7 @@ async def session_stream(
             # (When save_transcript is off, the in-memory history doesn't survive a
             # reconnect — a new orchestrator is created per connection — so this can
             # only resync to "awaiting a response".)
-            turns = await _load_turns(db, session_id, orchestrator)
+            turns = await load_turns(db, session_id, orchestrator)
             last_turn = turns[-1] if turns else None
             current_panelist_id: str | None = None
 
@@ -171,7 +122,7 @@ async def session_stream(
             await websocket.send_json(
                 ws_envelope(
                     WSMessageType.SESSION_STATE,
-                    _session_state_payload(session, orchestrator, current_panelist_id),
+                    build_session_state_payload(session, orchestrator, current_panelist_id),
                 )
             )
 
@@ -183,7 +134,7 @@ async def session_stream(
             message = UserResponseMessage.model_validate(raw)
             orchestrator.turn_state = TurnState.PROCESSING_RESPONSE
 
-            turns = await _load_turns(db, session_id, orchestrator)
+            turns = await load_turns(db, session_id, orchestrator)
             next_sequence = len(turns)
 
             # Patch the gesture timeline onto the panelist turn the user just
@@ -204,9 +155,9 @@ async def session_stream(
                 started_at_ms=0,
                 ended_at_ms=message.duration_ms,
             )
-            await _add_turn(db, orchestrator, user_turn)
+            await add_turn(db, orchestrator, user_turn)
 
-            turns = await _load_turns(db, session_id, orchestrator)
+            turns = await load_turns(db, session_id, orchestrator)
             next_panelist = select_next_panelist(panelists, turns)
 
             document_context = None
@@ -289,7 +240,7 @@ async def session_stream(
                     "structure": orchestrator.structure,
                 },
             )
-            await _add_turn(db, orchestrator, panelist_turn)
+            await add_turn(db, orchestrator, panelist_turn)
 
             orchestrator.current_panelist_id = next_panelist.id
 
