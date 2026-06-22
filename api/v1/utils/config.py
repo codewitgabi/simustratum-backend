@@ -12,6 +12,15 @@ class Config(BaseSettings):
     DB_POOL_SIZE: int = 5
     DB_MAX_OVERFLOW: int = 10
 
+    # Aurora PostgreSQL IAM auth — when DB_HOST is set, the engine authenticates
+    # with a short-lived IAM token instead of DATABASE_URL's static password.
+    # Leave DB_HOST blank (the default) to keep using DATABASE_URL as-is.
+    DB_HOST: Optional[str] = None
+    AWS_REGION: Optional[str] = None
+    DB_USERNAME: str = "postgres"
+    DB_NAME: str = "postgres"
+    DB_PORT: int = 5432
+
     ALLOWED_ORIGINS: Optional[str] = None
 
     JWT_SECRET_KEY: str = ""

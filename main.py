@@ -32,6 +32,7 @@ from api.v1.middlewares.errors import (
 )
 from api.v1.middlewares.logging import LoggingMiddleware
 from api.v1.routes import v1_router
+from api.v1.routes.health import health_router
 from api.v1.services import qdrant_client
 from api.v1.utils.config import config
 from api.v1.utils.logger import setup_logger
@@ -80,6 +81,7 @@ app.add_exception_handler(MultipleResultsFound, sqlalchemy_multiple_results_foun
 app.add_exception_handler(SQLAlchemyError, sqlalchemy_generic_error_handler)
 app.add_exception_handler(Exception, general_exception_handler)
 
+app.include_router(health_router)
 app.include_router(v1_router)
 
 if __name__ == "__main__":

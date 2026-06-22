@@ -2,6 +2,10 @@ import os
 
 _DEFAULT_TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/simustratum_test"
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL", _DEFAULT_TEST_DATABASE_URL)
+# Force the plain-DATABASE_URL path regardless of what a developer's real .env
+# has configured for Aurora IAM auth — tests must never attempt a real AWS
+# connection, and must be deterministic across machines.
+os.environ["DB_HOST"] = ""
 os.environ.setdefault("JWT_SECRET_KEY", "test-jwt-secret-key-for-integration-tests")
 os.environ.setdefault("JWT_ACCESS_EXPIRE_MINUTES", "15")
 os.environ.setdefault("JWT_REFRESH_EXPIRE_DAYS", "30")
