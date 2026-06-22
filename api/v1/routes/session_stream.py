@@ -53,25 +53,35 @@ async def session_stream(
     token: str = Query(...),
     db: AsyncSession = Depends(get_db),
 ) -> None:
+    # Accept first, then validate — a close() sent before accept() never
+    # completes the WebSocket opening handshake, so a real browser can't see
+    # the close code or reason at all (the WebSocket spec collapses any
+    # pre-handshake failure to code 1006 with no reason, to avoid leaking
+    # info cross-origin). Accepting first means rejections below are real,
+    # observable closes with the actual code/reason.
+    await websocket.accept()
+
+    async def reject(code: int, message: str) -> None:
+        await websocket.send_json(ws_envelope(WSMessageType.ERROR, ErrorPayload(message=message)))
+        await websocket.close(code=code, reason=message)
+
     user = await get_current_user_ws(token, db)
     if user is None:
-        await websocket.close(code=4401, reason="Invalid or expired token")
+        await reject(4401, "Invalid or expired token")
         return
 
     session = await get_session(db, session_id)
     if session is None:
-        await websocket.close(code=4404, reason="Session not found")
+        await reject(4404, "Session not found")
         return
 
     if session.user_id != user.id:
-        await websocket.close(code=4403, reason="Forbidden")
+        await reject(4403, "Forbidden")
         return
 
     if session.status in (SessionStatus.COMPLETED, SessionStatus.ABANDONED):
-        await websocket.close(code=4409, reason="Session already ended")
+        await reject(4409, "Session already ended")
         return
-
-    await websocket.accept()
 
     panelists = build_personas(session.panelists)
     panelists_by_id = {p.id: p for p in panelists}

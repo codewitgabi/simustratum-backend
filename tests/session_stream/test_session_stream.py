@@ -294,16 +294,32 @@ def test_save_transcript_disabled_persists_no_turns_but_session_still_progresses
     assert body["turns"] == []
 
 
+def _assert_rejected_after_accept(ws_client, url: str, expected_code: int, expected_message: str) -> None:
+    """
+    The connection is accepted before validation (see session_stream.py), so a
+    rejection is a real, observable close with the actual code/reason — not a
+    pre-handshake failure a browser would collapse to 1006. The client sees an
+    `error` message first, then the disconnect on the next receive.
+    """
+    with ws_client.websocket_connect(url) as ws:
+        error_message = ws.receive_json()
+        assert error_message["type"] == "error"
+        assert error_message["payload"]["message"] == expected_message
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            ws.receive_json()
+
+    assert exc_info.value.code == expected_code
+
+
 def test_connect_rejects_invalid_token(ws_client, stub_external_services):
     user = _register(ws_client)
     token = user["tokens"]["access_token"]
     session = _create_session(ws_client, token)
 
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with ws_client.websocket_connect(_stream_url(session["id"], "not-a-real-token")):
-            pass
-
-    assert exc_info.value.code == 4401
+    _assert_rejected_after_accept(
+        ws_client, _stream_url(session["id"], "not-a-real-token"), 4401, "Invalid or expired token"
+    )
 
 
 def test_connect_rejects_session_belonging_to_another_user(ws_client, stub_external_services):
@@ -312,21 +328,17 @@ def test_connect_rejects_session_belonging_to_another_user(ws_client, stub_exter
 
     other = _register(ws_client)
 
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with ws_client.websocket_connect(_stream_url(session["id"], other["tokens"]["access_token"])):
-            pass
-
-    assert exc_info.value.code == 4403
+    _assert_rejected_after_accept(
+        ws_client, _stream_url(session["id"], other["tokens"]["access_token"]), 4403, "Forbidden"
+    )
 
 
 def test_connect_rejects_unknown_session(ws_client, stub_external_services):
     user = _register(ws_client)
 
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with ws_client.websocket_connect(_stream_url(str(uuid.uuid4()), user["tokens"]["access_token"])):
-            pass
-
-    assert exc_info.value.code == 4404
+    _assert_rejected_after_accept(
+        ws_client, _stream_url(str(uuid.uuid4()), user["tokens"]["access_token"]), 4404, "Session not found"
+    )
 
 
 def test_connect_rejects_already_ended_session(ws_client, stub_external_services):
@@ -336,8 +348,6 @@ def test_connect_rejects_already_ended_session(ws_client, stub_external_services
 
     ws_client.post(f"/api/v1/sessions/{session['id']}/end", headers={"Authorization": f"Bearer {token}"})
 
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with ws_client.websocket_connect(_stream_url(session["id"], token)):
-            pass
-
-    assert exc_info.value.code == 4409
+    _assert_rejected_after_accept(
+        ws_client, _stream_url(session["id"], token), 4409, "Session already ended"
+    )
