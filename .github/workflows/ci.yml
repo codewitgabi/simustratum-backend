@@ -92,5 +92,16 @@ jobs:
 
             sudo systemctl restart fastapi.service
 
-            sleep 3
-            curl -fsS http://localhost:8000/health/db
+            for i in $(seq 1 10); do
+              if curl -fsS http://localhost:8000/health/db; then
+                echo "Health check passed."
+                exit 0
+              fi
+              echo "Waiting for service to come up... ($i/10)"
+              sleep 3
+            done
+
+            echo "Service did not become healthy in time. Recent logs:"
+            sudo systemctl status fastapi.service --no-pager || true
+            sudo journalctl -u fastapi.service -n 80 --no-pager || true
+            exit 1
