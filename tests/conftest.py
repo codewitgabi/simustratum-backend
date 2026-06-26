@@ -15,6 +15,11 @@ os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
 os.environ.setdefault("CLOUDINARY_URL", "cloudinary://test_key:test_secret@test_cloud")
 os.environ.setdefault("GOOGLE_CLIENT_ID", "")
 os.environ.setdefault("ALLOWED_ORIGINS", "")
+os.environ.setdefault("FRONTEND_URL", "https://test.simustratum.com")
+os.environ.setdefault("STRIPE_SECRET_KEY", "sk_test_fake_for_tests")
+os.environ.setdefault("STRIPE_WEBHOOK_SECRET", "whsec_fake_for_tests")
+os.environ.setdefault("STRIPE_PRICE_ID_NGN", "price_ngn_fake")
+os.environ.setdefault("STRIPE_PRICE_ID_USD", "price_usd_fake")
 
 import uuid
 from collections.abc import AsyncGenerator, Iterator
