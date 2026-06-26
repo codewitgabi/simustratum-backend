@@ -132,6 +132,10 @@ async def create_document(user_id: Any, file: UploadFile, db: AsyncSession) -> D
     extension = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     if extension not in SUPPORTED_EXTENSIONS:
+        logger.warning(
+            "Document upload rejected: unsupported type",
+            extra={"filename": filename, "extension": extension, "user_id": str(user_id)},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported document type. Allowed types: {', '.join(sorted(SUPPORTED_EXTENSIONS))}",
@@ -139,11 +143,19 @@ async def create_document(user_id: Any, file: UploadFile, db: AsyncSession) -> D
 
     content = await file.read()
     if len(content) > MAX_DOCUMENT_SIZE_BYTES:
+        logger.warning(
+            "Document upload rejected: exceeds size limit",
+            extra={"filename": filename, "size_bytes": len(content), "user_id": str(user_id)},
+        )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Document exceeds the {MAX_DOCUMENT_SIZE_BYTES // (1024 * 1024)}MB size limit",
         )
     if not content:
+        logger.warning(
+            "Document upload rejected: empty file",
+            extra={"filename": filename, "user_id": str(user_id)},
+        )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Document is empty")
 
     file_url = upload_to_cloudinary(content, filename)
@@ -161,6 +173,10 @@ async def create_document(user_id: Any, file: UploadFile, db: AsyncSession) -> D
     try:
         text = extract_text(filename, content)
     except UnsupportedDocumentError as exc:
+        logger.warning(
+            "Document text extraction failed: unsupported type",
+            extra={"document_id": str(document.id), "filename": filename, "error": str(exc)},
+        )
         document.status = DocumentStatus.FAILED
         document.error_message = str(exc)
         await db.commit()

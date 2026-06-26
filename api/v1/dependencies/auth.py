@@ -9,6 +9,9 @@ from api.database import get_db
 from api.v1.models.token_blacklist import TokenBlacklist
 from api.v1.models.user import User
 from api.v1.utils.jwt_tokens import decode_token
+from api.v1.utils.logger import get_logger
+
+logger = get_logger("auth.dependency")
 
 _bearer = HTTPBearer()
 
@@ -20,7 +23,8 @@ def hash_token(token: str) -> str:
 async def _validate_access_token(token: str, db: AsyncSession) -> dict:
     try:
         payload = decode_token(token)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Access token decode failed", extra={"error": str(exc)})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
     if payload.get("type") != "access":

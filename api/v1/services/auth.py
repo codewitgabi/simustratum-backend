@@ -14,7 +14,10 @@ from api.v1.models.user import AuthProvider, User
 from api.v1.schemas.auth import TokenResponse, UserResponse
 from api.v1.utils.config import config
 from api.v1.utils.jwt_tokens import create_access_token, create_refresh_token, decode_token
+from api.v1.utils.logger import get_logger
 from api.v1.utils.password_hash import hash_password, verify_password
+
+logger = get_logger("auth.service")
 
 _GOOGLE_TOKENINFO_URL = "https://oauth2.googleapis.com/tokeninfo"
 
@@ -75,7 +78,8 @@ async def login(email: str, password: str, db: AsyncSession) -> dict[str, Any]:
 async def refresh_tokens(refresh_token: str, db: AsyncSession) -> dict[str, Any]:
     try:
         payload = decode_token(refresh_token)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Refresh token decode failed", extra={"error": str(exc)})
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
 
     if payload.get("type") != "refresh":
@@ -229,6 +233,7 @@ def _blacklist_token(token: str, db_session: AsyncSession) -> None:
 async def logout(access_token: str, db: AsyncSession) -> None:
     try:
         _blacklist_token(access_token, db)
-    except Exception:
+    except Exception as exc:
+        logger.error("Failed to blacklist token during logout", extra={"error": str(exc)}, exc_info=True)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     await db.commit()

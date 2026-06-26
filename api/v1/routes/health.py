@@ -6,6 +6,9 @@ from api.database import get_db
 from api.response import success_response
 from api.v1.services.qdrant_client import get_qdrant_client
 from api.v1.utils.config import config
+from api.v1.utils.logger import get_logger
+
+logger = get_logger("health")
 
 health_router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -22,6 +25,7 @@ async def qdrant_health():
     try:
         collections = await get_qdrant_client().get_collections()
     except Exception as exc:
+        logger.error("Qdrant health check failed", extra={"error": str(exc)}, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Qdrant is unreachable: {exc}",
