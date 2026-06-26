@@ -102,6 +102,10 @@ async def session_stream(
 
     try:
         if session.status == SessionStatus.PENDING:
+            if user.plan != "pro" and len(session.panelists or []) > 1:
+                await reject(4403, "Free accounts support 1 AI panelist per session. Upgrade to Student Pro for up to 3.")
+                return
+
             session.status = SessionStatus.IN_PROGRESS
             session.started_at = datetime.now(timezone.utc)
             await db.commit()

@@ -48,6 +48,12 @@ class Config(BaseSettings):
     # neither an Origin nor a Referer header (e.g. a non-browser client).
     FRONTEND_URL: Optional[str] = None
 
+    # Stripe billing
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    STRIPE_PRICE_ID_NGN: str = ""
+    STRIPE_PRICE_ID_USD: str = ""
+
     # Outbound email (fastapi-mail / SMTP)
     MAIL_USERNAME: Optional[str] = None
     MAIL_PASSWORD: Optional[str] = None

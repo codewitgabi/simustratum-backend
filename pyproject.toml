@@ -32,6 +32,7 @@ dependencies = [
     "python-docx>=1.2.0",
     "python-multipart>=0.0.32",
     "qdrant-client>=1.18.0",
+    "stripe>=10.0.0",
 ]
 
 [dependency-groups]

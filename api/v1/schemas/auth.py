@@ -82,6 +82,7 @@ class UserResponse(BaseModel):
     email: str
     is_verified: bool
     auth_provider: str
+    plan: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

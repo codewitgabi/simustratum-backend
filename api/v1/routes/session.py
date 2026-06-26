@@ -1,12 +1,16 @@
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
 from api.response import success_response
 from api.v1.dependencies.auth import get_current_user
+from api.v1.models.session import Session, SessionStatus
 from api.v1.models.user import User
 from api.v1.schemas.session import (
     CreateSessionRequest,
@@ -17,7 +21,7 @@ from api.v1.schemas.session import (
     SessionResponse,
 )
 from api.v1.schemas.transcript_turn import AudioUploadRequest, AudioUploadResponse
-from api.v1.services import session as session_service
+from api.v1.services import billing_service, session as session_service
 
 session_router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
@@ -28,7 +32,12 @@ async def create_session(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
+    await billing_service.check_session_limit(user, db)
+
     session = await session_service.create_session(user.id, body, db)
+
+    await billing_service.increment_session_usage(user, db)
+
     return success_response(
         message="Session created successfully",
         status_code=status.HTTP_201_CREATED,
@@ -61,6 +70,46 @@ async def list_sessions(
             "items": items,
             "meta": {"total": total, "page": page, "limit": limit},
         },
+    )
+
+
+@session_router.post("/{session_id}/start", status_code=status.HTTP_200_OK)
+async def start_session(
+    session_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if session.user_id != user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if session.status in (SessionStatus.COMPLETED, SessionStatus.ABANDONED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Session already ended",
+        )
+
+    if user.plan != "pro" and len(session.panelists or []) > 1:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=jsonable_encoder({
+                "success": False,
+                "message": "Free accounts support 1 AI panelist per session. Upgrade to Student Pro for up to 3.",
+                "error_code": "panelist_limit_exceeded",
+            }),
+        )
+
+    if session.status == SessionStatus.PENDING:
+        session.status = SessionStatus.IN_PROGRESS
+        session.started_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    return success_response(
+        message="Session started",
+        data={"status": session.status.value},
     )
 
 
