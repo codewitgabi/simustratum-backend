@@ -180,38 +180,61 @@ async def session_stream(
                     uuid.UUID(session.document_id), message.text
                 )
 
-            try:
-                score_delta, next_question = await asyncio.gather(
-                    score_response(message.text, session.scenario, session.topic),
-                    generate_next_question(
-                        next_panelist,
-                        session.scenario,
-                        session.topic,
-                        turns,
-                        panelists_by_id,
-                        get_gemini_client(),
-                        get_anthropic_client(),
-                        document_context,
-                    ),
-                )
-                next_question_text = next_question.question_text
-                is_followup = next_question.is_followup
-                targets_weakness = next_question.targets_weakness
-            except Exception:
-                logger.exception(
-                    "LLM/scoring call failed during live session turn",
-                    extra={"session_id": str(session_id)},
-                )
-                await websocket.send_json(
-                    ws_envelope(
-                        WSMessageType.ERROR,
-                        ErrorPayload(message="Something went wrong generating the next question."),
+            is_final_turn = (orchestrator.question_count + 1) >= QUESTION_LIMIT
+
+            if is_final_turn:
+                # Skip question generation on the last turn — score only, then
+                # send a closing remark so the panelist signs off gracefully
+                # before SESSION_COMPLETE arrives.
+                try:
+                    score_delta = await score_response(message.text, session.scenario, session.topic)
+                except Exception:
+                    logger.exception(
+                        "Scoring call failed on final session turn",
+                        extra={"session_id": str(session_id)},
                     )
+                    score_delta = {"clarity": 0, "confidence": 0, "structure": 0}
+
+                next_question_text = (
+                    "And that brings us to the end of this session! "
+                    "You've done a fantastic job — keep that same energy for the real thing. "
+                    "Best of luck, and we hope to see you back here soon!"
                 )
-                score_delta = {"clarity": 0, "confidence": 0, "structure": 0}
-                next_question_text = "Can you expand further on that point?"
                 is_followup = False
                 targets_weakness = None
+            else:
+                try:
+                    score_delta, next_question = await asyncio.gather(
+                        score_response(message.text, session.scenario, session.topic),
+                        generate_next_question(
+                            next_panelist,
+                            session.scenario,
+                            session.topic,
+                            turns,
+                            panelists_by_id,
+                            get_gemini_client(),
+                            get_anthropic_client(),
+                            document_context,
+                        ),
+                    )
+                    next_question_text = next_question.question_text
+                    is_followup = next_question.is_followup
+                    targets_weakness = next_question.targets_weakness
+                except Exception:
+                    logger.exception(
+                        "LLM/scoring call failed during live session turn",
+                        extra={"session_id": str(session_id)},
+                    )
+                    await websocket.send_json(
+                        ws_envelope(
+                            WSMessageType.ERROR,
+                            ErrorPayload(message="Something went wrong generating the next question."),
+                        )
+                    )
+                    score_delta = {"clarity": 0, "confidence": 0, "structure": 0}
+                    next_question_text = "Can you expand further on that point?"
+                    is_followup = False
+                    targets_weakness = None
 
             orchestrator.clarity = max(0, min(100, orchestrator.clarity + score_delta["clarity"]))
             orchestrator.confidence = max(0, min(100, orchestrator.confidence + score_delta["confidence"]))
