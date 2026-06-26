@@ -80,16 +80,23 @@ def _test_database() -> None:
     _ensure_test_database_exists()
     _run_migrations()
 
-    # Swap the app's module-level engine/sessionmaker for NullPool versions:
-    # the WebSocket tests use Starlette's TestClient, which runs the ASGI app on a
+    # Swap the app's module-level engines/sessionmakers for NullPool versions.
+    # The WebSocket tests use Starlette's TestClient, which runs the ASGI app on a
     # separate thread with its own event loop. asyncpg connections are bound to the
     # loop that created them, so a pooled connection checked out on one loop and
     # reused on another raises. NullPool opens a fresh connection per checkout/
     # release, sidestepping that entirely — at the cost of pooling, which is fine
     # for a test suite.
-    database_module.engine = create_async_engine(config.DATABASE_URL, poolclass=NullPool, echo=False)
+    # Both the writer engine and the reader engine must be replaced: the reader
+    # engine is now used by GET /sessions and GET /sessions/{id}/replay routes.
+    _null_engine = create_async_engine(config.DATABASE_URL, poolclass=NullPool, echo=False)
+    database_module.engine = _null_engine
+    database_module.reader_engine = _null_engine
     database_module.AsyncSessionLocal = async_sessionmaker(
-        bind=database_module.engine, expire_on_commit=False, class_=AsyncSession
+        bind=_null_engine, expire_on_commit=False, class_=AsyncSession
+    )
+    database_module._ReaderSessionLocal = async_sessionmaker(
+        bind=_null_engine, expire_on_commit=False, class_=AsyncSession
     )
 
 

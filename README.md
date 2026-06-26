@@ -116,10 +116,12 @@ Leave these unset locally — the app falls back to `DATABASE_URL`.
 
 | Variable | Description |
 |---|---|
-| `DB_HOST` | Aurora cluster endpoint |
+| `DB_HOST` | Aurora writer endpoint (cluster endpoint — always routes to primary) |
+| `DB_READER_HOST` | Aurora reader endpoint — when set, read-only queries are routed here, leaving the writer free for mutations |
 | `DB_NAME` | Database name |
 | `DB_USERNAME` | Database user |
 | `DB_PORT` | Default: `5432` |
+| `DB_POOL_TIMEOUT` | Connection acquisition timeout in seconds — default: `30` |
 | `AWS_REGION` | e.g. `us-east-1` |
 
 ### Google OAuth

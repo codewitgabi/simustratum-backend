@@ -16,10 +16,16 @@ class Config(BaseSettings):
     # with a short-lived IAM token instead of DATABASE_URL's static password.
     # Leave DB_HOST blank (the default) to keep using DATABASE_URL as-is.
     DB_HOST: Optional[str] = None
+    # Aurora reader endpoint — when set, read-only queries (session list, replay,
+    # billing status) are routed to Aurora's reader endpoint, leaving the writer
+    # free for mutations. Falls back to the writer endpoint when unset so local
+    # development and single-node deploys work without configuration changes.
+    DB_READER_HOST: Optional[str] = None
     AWS_REGION: Optional[str] = None
     DB_USERNAME: str = "postgres"
     DB_NAME: str = "postgres"
     DB_PORT: int = 5432
+    DB_POOL_TIMEOUT: int = 30
 
     ALLOWED_ORIGINS: Optional[str] = None
 

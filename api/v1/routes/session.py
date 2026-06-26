@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.database import get_db
+from api.database import get_db, get_read_db
 from api.response import success_response
 from api.v1.dependencies.auth import get_current_user
 from api.v1.models.session import Session, SessionStatus
@@ -50,7 +50,7 @@ async def list_sessions(
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> JSONResponse:
     sessions, total = await session_service.list_sessions(user.id, page, limit, db)
     items = [
@@ -165,7 +165,7 @@ async def request_audio_upload_url(
 async def get_session_replay(
     session_id: uuid.UUID,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_read_db),
 ) -> JSONResponse:
     response: ReplaySessionResponse = await session_service.get_session_replay(user.id, session_id, db)
     return success_response(message="Session replay retrieved successfully", data=response.model_dump())
