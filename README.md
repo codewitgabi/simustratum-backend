@@ -4,6 +4,12 @@ FastAPI backend for Simustratum — an AI-powered mock interview platform. Handl
 
 ---
 
+## Architecture
+
+![Simustratum system architecture](docs/simustratum.png)
+
+---
+
 ## Table of Contents
 
 - [Tech Stack](#tech-stack)
